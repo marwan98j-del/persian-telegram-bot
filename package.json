@@ -1,0 +1,13 @@
+{
+  "name": "persian-anf-bot",
+  "version": "1.0.0",
+  "main": "persian-bot.js",
+  "scripts": {
+    "start": "node persian-bot.js"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dotenv": "^17.2.2",
+    "rss-parser": "^3.13.0"
+  }
+}
