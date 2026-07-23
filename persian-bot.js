@@ -1,4 +1,5 @@
-// persian-bot.js (CommonJS version)
+// persian-bot.js
+// Automatically posts new Persian ANF RSS articles with Telegram Instant View.
 
 const Parser = require("rss-parser");
 const axios = require("axios");
@@ -15,46 +16,50 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const FEED_URL = process.env.FEED_URL;
 
-// Telegram Instant View template hash
+// Your working Telegram Instant View template
 const INSTANT_VIEW_RHASH =
   process.env.INSTANT_VIEW_RHASH || "cb93cf5b90b9dc";
 
 const POSTED_FILE = "./posted.json";
 
-const MAX_POSTED = parseInt(process.env.MAX_POSTED || "500", 10);
+const MAX_POSTED = Number.parseInt(
+  process.env.MAX_POSTED || "500",
+  10
+);
 
-const POLL_INTERVAL_SECONDS = parseInt(
+const POLL_INTERVAL_SECONDS = Number.parseInt(
   process.env.POLL_INTERVAL_SECONDS || "60",
   10
 );
 
-// Check required environment variables
+// Required settings check
 if (!BOT_TOKEN || !CHANNEL_ID || !FEED_URL) {
   console.error(
-    "❌ Missing environment variables. Please set BOT_TOKEN, CHANNEL_ID and FEED_URL in your .env file."
+    "❌ Missing BOT_TOKEN, CHANNEL_ID or FEED_URL."
   );
   process.exit(1);
 }
 
-// Load previously posted article links
+// Load previously posted URLs
 let posted = [];
 
 if (fs.existsSync(POSTED_FILE)) {
   try {
-    const fileContents = fs.readFileSync(POSTED_FILE, "utf8");
-    const parsedContents = JSON.parse(fileContents);
+    const savedData = JSON.parse(
+      fs.readFileSync(POSTED_FILE, "utf8")
+    );
 
-    if (Array.isArray(parsedContents)) {
-      posted = parsedContents;
-    } else {
-      console.warn("⚠️ posted.json is not an array. Starting fresh.");
+    if (Array.isArray(savedData)) {
+      posted = savedData;
     }
   } catch (error) {
-    console.warn("⚠️ Could not parse posted.json. Starting fresh.");
+    console.warn(
+      "⚠️ Could not read posted.json. Starting with an empty list."
+    );
   }
 }
 
-// Save posted article links
+// Save posted URLs
 function savePosted() {
   try {
     fs.writeFileSync(
@@ -64,20 +69,20 @@ function savePosted() {
     );
   } catch (error) {
     console.error(
-      "❌ Failed to save posted.json:",
-      error?.message || error
+      "❌ Could not save posted.json:",
+      error.message
     );
   }
 }
 
-// Escape text for Telegram MarkdownV2
+// Escape normal text for Telegram MarkdownV2
 function escapeMarkdownV2(text = "") {
   return text
     .toString()
     .replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
 }
 
-// Escape a URL used inside a MarkdownV2 link
+// Escape URLs used inside MarkdownV2 links
 function escapeMarkdownUrl(url = "") {
   return url
     .toString()
@@ -86,13 +91,13 @@ function escapeMarkdownUrl(url = "") {
 }
 
 // Decode common HTML entities
-function decodeEntities(str = "") {
-  return str
-    .replace(/&#(\d+);/g, (_, code) =>
-      String.fromCodePoint(parseInt(code, 10))
+function decodeEntities(text = "") {
+  return text
+    .replace(/&#(\d+);/g, (_, number) =>
+      String.fromCodePoint(Number.parseInt(number, 10))
     )
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
-      String.fromCodePoint(parseInt(hex, 16))
+      String.fromCodePoint(Number.parseInt(hex, 16))
     )
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, "&")
@@ -102,15 +107,15 @@ function decodeEntities(str = "") {
     .replace(/&nbsp;/g, " ");
 }
 
-// Remove HTML and normalize spaces
-function stripHtmlAndDecode(str = "") {
-  return decodeEntities(str)
+// Remove HTML tags and extra spaces
+function stripHtmlAndDecode(text = "") {
+  return decodeEntities(text)
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-// Create the Telegram Instant View URL automatically
+// Create the special Telegram Instant View URL
 function makeInstantViewUrl(articleUrl) {
   const encodedArticleUrl = encodeURIComponent(articleUrl);
 
@@ -139,53 +144,64 @@ const socialLinksArray = [
     url: "https://twitter.com/ANF_persian"
   },
   {
-    name: "webSite",
-    url: "https://anfpersian.com/"
+    name: "Site",
+    url: "https://farsi.anf-news.com/"
   }
 ];
 
 const socialLinks = socialLinksArray
-  .map((link) => {
-    const name = escapeMarkdownV2(link.name);
-    const url = escapeMarkdownUrl(link.url);
-
-    return `[${name}](${url})`;
+  .map(({ name, url }) => {
+    return (
+      `[${escapeMarkdownV2(name)}]` +
+      `(${escapeMarkdownUrl(url)})`
+    );
   })
   .join(" \\| ");
 
-// Send one article to Telegram
-async function sendArticle(item, articleUrl) {
-  const title = stripHtmlAndDecode(item.title || "").trim();
-
-  const snippetSource =
+// Extract the first sentence for the Telegram message
+function getFirstSentence(item) {
+  const source =
     item.contentSnippet ||
     item.content ||
     item.summary ||
     "";
 
-  const snippetText = stripHtmlAndDecode(snippetSource);
+  const cleanText = stripHtmlAndDecode(source);
 
-  // Extract the first sentence
-  const firstSentence =
-    (snippetText.split(/[.!?؟]/)[0] || "").trim();
+  return (
+    cleanText
+      .split(/[.!?؟]/)
+      .map((part) => part.trim())
+      .find(Boolean) || ""
+  );
+}
+
+// Send an article to Telegram
+async function sendArticle(item, articleUrl) {
+  const title = stripHtmlAndDecode(item.title || "");
+  const firstSentence = getFirstSentence(item);
 
   const instantViewUrl = makeInstantViewUrl(articleUrl);
-  const markdownInstantViewUrl =
+  const escapedInstantViewUrl =
     escapeMarkdownUrl(instantViewUrl);
 
-  // Build the Telegram message
   const messageParts = [];
 
   if (title) {
-    messageParts.push(`*${escapeMarkdownV2(title)}*`);
+    messageParts.push(
+      `*${escapeMarkdownV2(title)}*`
+    );
   }
 
   if (firstSentence) {
-    messageParts.push(escapeMarkdownV2(firstSentence));
+    messageParts.push(
+      escapeMarkdownV2(firstSentence)
+    );
   }
 
+  // This visible link opens the full article in Instant View
   messageParts.push(
-    `[مطالعه خبر](${markdownInstantViewUrl})`
+    `[مطالعه خبر](${escapedInstantViewUrl})`
   );
 
   messageParts.push(socialLinks);
@@ -199,7 +215,7 @@ async function sendArticle(item, articleUrl) {
       text: message,
       parse_mode: "MarkdownV2",
 
-      // Tell Telegram which URL should create the preview
+      // Forces Telegram to generate the preview from the Instant View URL
       link_preview_options: {
         is_disabled: false,
         url: instantViewUrl,
@@ -213,28 +229,31 @@ async function sendArticle(item, articleUrl) {
   );
 }
 
-// Read the RSS feed and post new articles
+// Check the RSS feed
 async function checkFeed() {
   try {
-    console.log("🔎 Checking RSS feed...");
+    console.log("🔎 Checking feed...");
 
     const feed = await parser.parseURL(FEED_URL);
 
-    if (!feed.items || !Array.isArray(feed.items)) {
-      console.warn("⚠️ The RSS feed contains no items.");
+    if (!Array.isArray(feed.items)) {
+      console.warn("⚠️ No feed items found.");
       return;
     }
 
-    // Reverse so older articles are posted before newer articles
+    // Older unseen articles are posted first
     const items = [...feed.items].reverse();
 
     for (const item of items) {
-      const rawLink = item.link || item.guid || "";
+      const rawLink =
+        item.link ||
+        item.guid ||
+        "";
 
       if (!rawLink) {
         console.warn(
-          "⚠️ Skipped an RSS item because it has no link:",
-          item.title || "Untitled item"
+          "⚠️ Skipped item without a link:",
+          item.title || "Untitled article"
         );
         continue;
       }
@@ -242,10 +261,11 @@ async function checkFeed() {
       let articleUrl;
 
       try {
-        articleUrl = new URL(rawLink, FEED_URL)
-          .toString()
-          .trim();
-      } catch (error) {
+        articleUrl = new URL(
+          rawLink,
+          FEED_URL
+        ).toString();
+      } catch {
         articleUrl = rawLink.trim();
       }
 
@@ -253,10 +273,9 @@ async function checkFeed() {
         continue;
       }
 
-      // Skip articles that were already posted
       if (posted.includes(articleUrl)) {
         console.log(
-          "⏩ Skipped duplicate:",
+          "⏩ Already posted:",
           item.title || articleUrl
         );
         continue;
@@ -266,11 +285,10 @@ async function checkFeed() {
         await sendArticle(item, articleUrl);
 
         console.log(
-          "✅ Posted:",
+          "✅ Posted with Instant View:",
           item.title || articleUrl
         );
 
-        // Save article as posted only after Telegram accepts it
         posted.push(articleUrl);
 
         if (posted.length > MAX_POSTED) {
@@ -279,13 +297,13 @@ async function checkFeed() {
 
         savePosted();
 
-        // Small delay between posts
+        // Avoid sending several messages too quickly
         await new Promise((resolve) =>
           setTimeout(resolve, 1500)
         );
       } catch (error) {
         console.error(
-          "❌ Telegram API error:",
+          "❌ Telegram error:",
           error.response?.data ||
             error.message ||
             error
@@ -294,39 +312,39 @@ async function checkFeed() {
     }
   } catch (error) {
     console.error(
-      "❌ Error fetching RSS feed:",
+      "❌ Feed error:",
       error.message || error
     );
   }
 }
 
-// Prevent multiple overlapping feed checks
-let isCheckingFeed = false;
+// Prevent overlapping feed checks
+let checkInProgress = false;
 
 async function safelyCheckFeed() {
-  if (isCheckingFeed) {
+  if (checkInProgress) {
     console.log(
-      "⏳ Previous feed check is still running. Skipping this cycle."
+      "⏳ A feed check is already running."
     );
     return;
   }
 
-  isCheckingFeed = true;
+  checkInProgress = true;
 
   try {
     await checkFeed();
   } finally {
-    isCheckingFeed = false;
+    checkInProgress = false;
   }
 }
 
-// Start the bot
-console.log("🤖 Persian ANF bot started.");
+// Start
+console.log("🤖 Persian ANF Telegram bot started.");
 console.log(
-  `⏱️ Feed will be checked every ${POLL_INTERVAL_SECONDS} seconds.`
+  `⚡ Instant View hash: ${INSTANT_VIEW_RHASH}`
 );
 console.log(
-  `⚡ Instant View template: ${INSTANT_VIEW_RHASH}`
+  `⏱️ Checking every ${POLL_INTERVAL_SECONDS} seconds.`
 );
 
 safelyCheckFeed();
